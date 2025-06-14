@@ -1,5 +1,6 @@
 # PrintALLApp.py
 import os
+import sys
 import glob
 import shutil
 import logging
@@ -77,11 +78,30 @@ except Exception as e:
     print(f"警告：PDF水印中文字体注册失败。错误: {e}")
     print("将回退到默认字体，PDF水印中的中文可能无法显示。")
 
+def resource_path(relative_path):
+    """ 获取资源的绝对路径, 适用于开发环境和 Nuitka 打包环境 """
+    try:
+        # Nuitka/PyInstaller会创建一个临时文件夹，并将路径存储在_MEIPASS中
+        # 对于Nuitka的 --standalone 模式，基本路径是可执行文件所在的目录
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        if hasattr(sys, '_MEIPASS'): # 兼容 PyInstaller
+             base_path = sys._MEIPASS
+    except NameError:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 class PrintALLApp:
     def __init__(self, root):
         self.root = root
         self.root.title("PrintALL 全能打印助手")
+
+        try:
+            # 使用辅助函数获取图标的正确路径
+            icon_path = resource_path("PrintALL.ico") 
+            self.root.iconbitmap(icon_path)
+        except Exception as e:
+            # 如果找不到图标，打印一个日志，程序依然可以运行
+            print(f"无法设置窗口图标: {e}")
         
         self._setup_logging()
         self.logger.info("========================================")
