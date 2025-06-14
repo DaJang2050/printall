@@ -19,7 +19,6 @@ from PIL import Image, ImageDraw, ImageFont, ImageStat
 # 水印功能
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml.shared import OxmlElement
 from docx.oxml.ns import nsdecls
 from docx.shared import RGBColor
 from PyPDF2 import (
@@ -32,6 +31,16 @@ from reportlab.lib.units import inch
 from reportlab.lib.colors import Color as ReportlabColor
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+
+# <--- NEW: 添加对Excel文件的支持 ---
+try:
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Side
+
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+# <--- END NEW ---
 
 # 打印功能
 from pypdf import (
@@ -93,7 +102,7 @@ def resource_path(relative_path):
 class PrintALLApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("PrintALL 全能打印助手")
+        self.root.title("PrintALL 全能打印助手  |  By YangZhiqiang")
 
         try:
             # 使用辅助函数获取图标的正确路径
@@ -108,6 +117,7 @@ class PrintALLApp:
         self.logger.info("应用程序启动")
         self.logger.info(f"pywin32可用: {PYWIN32_AVAILABLE}")
         self.logger.info(f"PDF中文字体注册成功: {FONT_REGISTERED_SUCCESS}")
+        self.logger.info(f"openpyxl可用 (Excel支持): {OPENPYXL_AVAILABLE}")
 
         window_width = 800
         window_height = 600
@@ -139,6 +149,10 @@ class PrintALLApp:
             self.log_watermark(
                 "【警告】PDF中文字体未找到，PDF水印中的中文可能显示为乱码。"
             )
+        if not OPENPYXL_AVAILABLE:
+            self.log_watermark(
+                "【警告】'openpyxl' 模块缺失，无法处理 .xlsx 文件。请运行 'pip install openpyxl' 安装。"
+            )
 
         self._initialize_print_log()
         self.root.after(100, self._start_background_tasks)
@@ -166,16 +180,18 @@ class PrintALLApp:
         self.root.destroy()
         
     # ==================================================================
-    # I. 水印功能模块 (代码未变动)
+    # I. 水印功能模块
     # ==================================================================
     def _initialize_watermark_vars(self):
         self.watermark_folder_path = tk.StringVar()
         self.process_word = tk.BooleanVar(value=True)
         self.process_pic = tk.BooleanVar(value=True)
         self.process_pdf = tk.BooleanVar(value=True)
+        self.process_excel = tk.BooleanVar(value=True)
         self.pic_font_size = tk.IntVar(value=35)
         self.pic_opacity = tk.IntVar(value=150)
         self.pic_position = tk.StringVar(value="顶部居中")
+
     def _validate_entry(self, new_value, min_val, max_val):
         if new_value == "":
             return True
@@ -184,6 +200,7 @@ class PrintALLApp:
             return min_val <= value <= max_val
         except ValueError:
             return False
+
     def _setup_watermark_tab(self):
         folder_frame = ttk.LabelFrame(
             self.watermark_tab, text="第一步: 选择要处理的文件夹", padding="10"
@@ -202,6 +219,12 @@ class PrintALLApp:
         ttk.Checkbutton(
             type_frame, text="Word 文档 (.docx)", variable=self.process_word
         ).pack(side=tk.LEFT, padx=10, pady=5)
+        excel_checkbutton = ttk.Checkbutton(
+            type_frame, text="Excel 工作簿 (.xlsx)", variable=self.process_excel
+        )
+        excel_checkbutton.pack(side=tk.LEFT, padx=10, pady=5)
+        if not OPENPYXL_AVAILABLE:
+            excel_checkbutton.config(state=tk.DISABLED)
         ttk.Checkbutton(
             type_frame, text="图片文件 (.jpg, .png, .bmp)", variable=self.process_pic
         ).pack(side=tk.LEFT, padx=10, pady=5)
@@ -284,38 +307,7 @@ class PrintALLApp:
         if folder:
             self.watermark_folder_path.set(folder)
             self.log_watermark(f"已选择文件夹: {folder}")
-    def _add_word_page_number(self, document):
-        try:
-            section = document.sections[0]
-            footer = section.footer
-            if not footer.paragraphs:
-                footer.add_paragraph()
-            footer_para = footer.paragraphs[0]
-            footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            fldChar1 = OxmlElement("w:fldChar")
-            fldChar1.set(OxmlElement.qn("w:fldCharType"), "begin")
-            instrText = OxmlElement("w:instrText")
-            instrText.text = "PAGE"
-            fldChar2 = OxmlElement("w:fldChar")
-            fldChar2.set(OxmlElement.qn("w:fldCharType"), "end")
-            run = footer_para.runs[0] if footer_para.runs else footer_para.add_run()
-            run._r.append(fldChar1)
-            run._r.append(instrText)
-            run._r.append(fldChar2)
-            return True
-        except Exception as e:
-            self.logger.error(f"添加Word页码时出错. Error: {e}", exc_info=True)
-            return False
-    def _check_word_has_page_number(self, document):
-        try:
-            for section in document.sections:
-                for paragraph in section.footer.paragraphs:
-                    if "PAGE" in paragraph.text or "fldChar" in paragraph._p.xml:
-                        return True
-            return False
-        except Exception as e:
-            self.logger.warning(f"检查Word页码时出错. Error: {e}", exc_info=True)
-            return False
+        
     def add_word_watermark(self, filepath):
         try:
             document = Document(filepath)
@@ -329,8 +321,6 @@ class PrintALLApp:
             header_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for run in header_paragraph.runs:
                 run.font.color.rgb = RGBColor(255, 0, 0)
-            if not self._check_word_has_page_number(document):
-                self._add_word_page_number(document)
             document.save(filepath)
             self.log_watermark(f"[Word] ✔ 成功: {filename}")
             return True
@@ -338,6 +328,60 @@ class PrintALLApp:
             self.log_watermark(f"[Word] ❌ 失败: {filename} - {e}")
             self.logger.error(f"处理Word文件'{filepath}'失败.", exc_info=True)
             return False
+    
+    # <--- FIXED: 重写Excel水印函数，使用正确的openpyxl API ---
+    def add_excel_watermark(self, filepath):
+        """
+        为.xlsx文件的每个工作表添加页眉。
+        格式: 文件名 | 工作表名 | 页码/总页码
+        """
+        try:
+            filename = os.path.basename(filepath)
+            workbook = openpyxl.load_workbook(filepath)
+            
+            # Excel的页眉/页脚格式代码:
+            # &F: 文件名
+            # &A: 工作表名
+            # &P: 当前页码
+            # &N: 总页码
+            header_format_string = "&F|&A 第&[Page]/&N页"
+            
+            for ws in workbook.worksheets:
+                # 设置页眉的中间部分
+                if not ws.oddHeader.center.text:
+                    ws.oddHeader.center.text = header_format_string
+                # 在每页打印第一行作为标题
+                ws.print_title_rows = '1:1'
+
+                # 为所有有内容的单元格添加所有边框
+                # 定义边框样式
+                thin_border = Border(
+                    left=Side(style='thin'),
+                    right=Side(style='thin'),
+                    top=Side(style='thin'),
+                    bottom=Side(style='thin')
+                )
+                # 获取工作表中有数据的最大行和列
+                max_row = ws.max_row
+                max_col = ws.max_column
+                # 遍历所有有内容的单元格
+                for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=max_col):
+                    for cell in row:
+                        if cell.value is not None:  # 只处理有内容的单元格
+                            cell.border = thin_border
+                        # 将第一行居中
+                        if cell.row == 1:
+                            cell.alignment = Alignment(horizontal='center', vertical='center')
+            
+            workbook.save(filepath)
+            self.log_watermark(f"[Excel] ✔ 成功: {filename}")
+            return True
+        except Exception as e:
+            self.log_watermark(f"[Excel] ❌ 失败: {filename} - {e}")
+            self.logger.error(f"处理Excel文件'{filepath}'失败.", exc_info=True)
+            return False
+    # <--- END FIXED ---
+    
     def _get_pic_watermark_position(self, img_size, text_size):
         img_width, img_height = img_size
         text_width, text_height = text_size
@@ -473,7 +517,7 @@ class PrintALLApp:
             self.logger.warning("水印任务启动失败：未选择文件夹。")
             return
         if not (
-            self.process_word.get() or self.process_pic.get() or self.process_pdf.get()
+            self.process_word.get() or self.process_pic.get() or self.process_pdf.get() or self.process_excel.get()
         ):
             messagebox.showwarning(
                 "警告", "请至少选择一种要处理的文件类型！", parent=self.watermark_tab
@@ -487,7 +531,7 @@ class PrintALLApp:
         except (tk.TclError, ValueError):
             messagebox.showerror(
                 "输入错误",
-                "图片水印的“字体大小”和“透明度”必须是有效的数字。",
+                "图片水印的'字体大小'和'透明度'必须是有效的数字。",
                 parent=self.watermark_tab,
             )
             self.logger.error("水印任务启动失败：无效的字体大小或透明度。", exc_info=True)
@@ -504,19 +548,21 @@ class PrintALLApp:
             processing_thread.start()
         else:
             self.logger.info("用户取消了水印处理任务。")
+            
     def _process_watermark_files(self):
         folder = self.watermark_folder_path.get()
         self.log_watermark("\n" + "=" * 40)
         self.log_watermark("...开始处理水印任务...")
-        do_word, do_pic, do_pdf = (
+        do_word, do_excel, do_pic, do_pdf = (
             self.process_word.get(),
+            self.process_excel.get(),
             self.process_pic.get(),
             self.process_pdf.get(),
         )
         self.logger.info(f"开始扫描文件夹: {folder}")
-        self.logger.info(f"处理类型 - Word: {do_word}, 图片: {do_pic}, PDF: {do_pdf}")
+        self.logger.info(f"处理类型 - Word: {do_word}, Excel: {do_excel}, 图片: {do_pic}, PDF: {do_pdf}")
         pic_extensions = (".jpg", ".jpeg", ".png", ".bmp")
-        counts = {"word": 0, "pic": 0, "pdf": 0, "total": 0}
+        counts = {"word": 0, "excel": 0, "pic": 0, "pdf": 0, "total": 0}
         for root_dir, _, files in os.walk(folder):
             for file in files:
                 if file.startswith("~"):
@@ -526,6 +572,10 @@ class PrintALLApp:
                 if do_word and filename_lower.endswith(".docx"):
                     if self.add_word_watermark(filepath):
                         counts["word"] += 1
+                    counts["total"] += 1
+                elif do_excel and filename_lower.endswith(".xlsx"):
+                    if self.add_excel_watermark(filepath):
+                        counts["excel"] += 1
                     counts["total"] += 1
                 elif do_pic and filename_lower.endswith(pic_extensions):
                     if self.add_picture_watermark(filepath):
@@ -539,6 +589,7 @@ class PrintALLApp:
             f"\n...处理完成!...\n"
             f"总共扫描并尝试处理 {counts['total']} 个文件。\n"
             f"  - 成功处理 Word: {counts['word']} 个\n"
+            f"  - 成功处理 Excel: {counts['excel']} 个\n"
             f"  - 成功处理 图片: {counts['pic']} 个\n"
             f"  - 成功处理 PDF: {counts['pdf']} 个\n" + "=" * 40
         )
@@ -551,14 +602,13 @@ class PrintALLApp:
         self.logger.info("水印处理任务完成。")
 
     # ==================================================================
-    # II. 批量打印模块
+    # II. 批量打印模块 (此部分代码未作修改)
     # ==================================================================
 
     def _initialize_print_vars(self):
         """初始化打印标签页所需的所有变量"""
         self.print_folder_path = tk.StringVar()
         self.print_printer_name = tk.StringVar()
-        # <--- MODIFIED: 为LibreOffice路径添加StringVar，并设置默认值 ---
         self.libreoffice_path_var = tk.StringVar(value=LIBREOFFICE_PATH) 
         self.print_doc_var = tk.BooleanVar(value=True)
         self.print_docx_var = tk.BooleanVar(value=True)
@@ -640,19 +690,15 @@ class PrintALLApp:
             filter_frame, from_=0, to=9999, textvariable=self.print_max_pages, width=5
         ).pack(side=tk.LEFT)
 
-        # <--- MODIFIED: 将LibreOffice路径的Label改为Entry和Button ---
         ttk.Label(self.print_tab, text="LibreOffice 路径:").grid(
             row=4, column=0, padx=5, pady=5, sticky="w"
         )
-        # 使用Entry控件，并绑定到新的StringVar
         ttk.Entry(self.print_tab, textvariable=self.libreoffice_path_var, width=50).grid(
             row=4, column=1, padx=5, pady=5, sticky="ew"
         )
-        # 添加一个浏览按钮
         ttk.Button(
             self.print_tab, text="浏览...", command=self._select_libreoffice_path
         ).grid(row=4, column=2, padx=5, pady=5)
-        # --- END OF MODIFICATION ---
 
         ttk.Label(self.print_tab, text="图片页边距 (像素):").grid(
             row=5, column=0, padx=5, pady=5, sticky="w"
@@ -737,7 +783,6 @@ class PrintALLApp:
     def _initialize_print_log(self):
         """打印模块的初始日志和检查（只包含快速操作）"""
         self.log_print("注意：勾选的图片将被合并成一个PDF文件进行打印。")
-        # <--- MODIFIED: 删除了原来硬编码的LibreOffice路径日志 ---
         if not os.path.exists(self.libreoffice_path_var.get()):
             self.log_print(f"【警告】未在默认路径找到LibreOffice: {self.libreoffice_path_var.get()}")
             self.log_print("【提示】如果需要打印Word(.doc/.docx)文件，请手动指定正确的'soffice.exe'路径。")
@@ -749,10 +794,8 @@ class PrintALLApp:
             self.print_folder_path.set(folder)
             self.log_print(f"选择的文件夹: {folder}")
 
-    # <--- NEW: 添加一个方法用于浏览并选择LibreOffice可执行文件 ---
     def _select_libreoffice_path(self):
         """打开文件对话框让用户选择LibreOffice (soffice.exe) 的路径。"""
-        # 尝试从当前路径获取目录作为初始目录
         current_path = self.libreoffice_path_var.get()
         initial_dir = os.path.dirname(current_path) if os.path.exists(current_path) else r"C:\Program Files"
 
@@ -766,7 +809,6 @@ class PrintALLApp:
             self.log_print(f"已更新 LibreOffice 路径: {filepath}")
 
     def _check_libreoffice_path(self):
-        # <--- MODIFIED: 从StringVar获取路径，而不是全局常量 ---
         current_path = self.libreoffice_path_var.get()
         if not current_path or not os.path.exists(current_path):
             self.logger.error(f"LibreOffice路径无效或未设置: {current_path}")
@@ -817,7 +859,6 @@ class PrintALLApp:
             temp_dir = None
             try:
                 temp_dir = tempfile.mkdtemp(prefix="page_count_")
-                # <--- MODIFIED: 从StringVar获取路径 ---
                 command = [
                     self.libreoffice_path_var.get(),
                     "--headless",
@@ -863,7 +904,6 @@ class PrintALLApp:
                 lambda: self.print_button.config(state=tk.NORMAL, text="开始批量打印"),
             )
         
-        # 检查Word/PDF打印依赖项是否需要
         selected_doc_types = self.print_doc_var.get() or self.print_docx_var.get()
         if selected_doc_types and not self._check_libreoffice_path():
             restore_button()
@@ -1052,7 +1092,6 @@ class PrintALLApp:
                 self.log_print(f"正在打印: {os.path.basename(file_path)}")
                 self.logger.info(f"提交打印任务 for: {file_path}")
                 try:
-                    # <--- MODIFIED: 从StringVar获取路径 ---
                     command = [
                         self.libreoffice_path_var.get(),
                         "--headless",
@@ -1104,5 +1143,7 @@ class PrintALLApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    root.withdraw()
     app = PrintALLApp(root)
+    root.deiconify() 
     root.mainloop()

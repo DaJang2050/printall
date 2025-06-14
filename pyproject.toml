@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11.9"
 dependencies = [
     "nuitka>=2.7.7",
+    "openpyxl>=3.1.5",
     "pillow>=11.2.1",
     "pypdf>=5.6.0",
     "pypdf2>=3.0.1",
