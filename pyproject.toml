@@ -1,0 +1,15 @@
+[project]
+name = "printall"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.9"
+dependencies = [
+    "nuitka>=2.7.7",
+    "pillow>=11.2.1",
+    "pypdf>=5.6.0",
+    "pypdf2>=3.0.1",
+    "python-docx>=1.1.2",
+    "pywin32>=310",
+    "reportlab>=4.4.1",
+]
