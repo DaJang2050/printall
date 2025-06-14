@@ -11,3 +11,4 @@ wheels/
 
 # App-generated files
 *.log
+test.py
