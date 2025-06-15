@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageStat
 # 水印功能
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import RGBColor
+from docx.shared import RGBColor,Pt
 
 # <--- 使用 PyMuPDF (fitz) 作为新的PDF水印引擎 ---
 try:
@@ -264,21 +264,59 @@ class PrintALLApp:
             document = Document(filepath)
             filename = os.path.basename(filepath)
             header_text = f"打印对象：{filename}"
-            header = document.sections[0].header
+            
+            # 获取文档的第一个节（section）来访问页面设置
+            section = document.sections[0]
+            header = section.header
+            
+            # 用于存储我们要操作的页眉段落
+            target_paragraph = None
+            
+            # (检查页眉是否为空的逻辑保持不变)
             if not header.paragraphs:
-                header.add_paragraph()
-            header_paragraph = header.paragraphs[0]
-            if not header_paragraph.text:
-                header_paragraph.text = header_text
-            header_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            for run in header_paragraph.runs:
-                run.font.color.rgb = RGBColor(255, 0, 0)
-            document.save(filepath)
-            self.log_watermark(f"[Word] ✔ 成功: {filename}")
+                target_paragraph = header.add_paragraph()
+            else:
+                first_paragraph = header.paragraphs[0]
+                if not first_paragraph.text.strip():
+                    target_paragraph = first_paragraph
+            
+            if target_paragraph:
+                target_paragraph.clear() 
+                
+                run = target_paragraph.add_run(header_text)
+                
+                # --- 核心修改部分：动态计算字体大小 ---
+                
+                # 1. 获取页面的可用宽度（页面宽度 - 左右页边距），单位转换为磅(Pt)
+                #    section.page_width, left_margin, right_margin 的单位是 EMU，使用 .pt 可以直接转换为磅
+                usable_width_pt = section.page_width.pt - section.left_margin.pt - section.right_margin.pt
+                
+                # 2. 根据可用宽度动态计算字体大小
+                #    除数 60 是一个经验值，可以根据实际效果调整，值越大字体越小
+                #    max(9, ...) 确保字体最小不低于9磅，保证可读性
+                dynamic_fontsize = max(9, int(usable_width_pt / 60))
+                
+                # --- 修改结束 ---
+                # 设置字体样式
+                font = run.font
+                font.name = '宋体'
+                # 3. 应用动态计算出的字体大小
+                font.size = Pt(dynamic_fontsize)
+                font.color.rgb = RGBColor(255, 0, 0)
+                
+                # 设置段落对齐方式
+                target_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                
+                document.save(filepath)
+                self.log_watermark(f"[Word] ✔ 成功: {filename}")
+            else:
+                # 当 target_paragraph 为 None 时，说明页眉已存在且有内容，我们跳过了修改
+                # 在这里打印“跳过”的日志
+                self.log_watermark(f"[Word] ！ 跳过（页眉内容已存在）: {filename}")
             return True
         except Exception as e:
             self.log_watermark(f"[Word] ❌ 失败: {filename} - {e}")
-            self.logger.error(f"处理Word文件'{filepath}'失败.", exc_info=True)
+            self.logger().error(f"处理Word文件'{filepath}'失败.", exc_info=True)
             return False
     
     def add_excel_watermark(self, filepath):
@@ -376,6 +414,7 @@ class PrintALLApp:
     def add_pdf_watermark(self, input_pdf_path, filename):
         """
         使用 PyMuPDF (fitz) 为PDF文件添加页眉式水印，并原地保存。
+        如果检测到已存在水印，则跳过。
         """
         if not CHINESE_FONT_AVAILABLE:
             self.log_watermark(f"[PDF] ❌ 失败: {filename} - 中文字体文件 '{CHINESE_FONT_PATH}' 未找到。")
@@ -385,8 +424,20 @@ class PrintALLApp:
         doc = None
         try:
             doc = fitz.open(input_pdf_path)
-            total_pages = doc.page_count
+            
+            # 在处理前检查第一页是否存在水印
+            if doc.page_count > 0:
+                # 获取第一页的纯文本内容
+                first_page_text = doc[0].get_text("text")
+                # 通过一个独特的文本组合来判断水印是否存在，以降低误判率
+                # 例如，我们的水印包含 "打印对象"
+                if "打印对象" in first_page_text:
+                    self.log_watermark(f"[PDF] ！ 跳过（已存在页眉水印）: {filename}")
+                    doc.close()  # 在返回前必须关闭文档
+                    doc = None 
+                    return True
 
+            total_pages = doc.page_count
             for i in range(total_pages):
                 page = doc.load_page(i)
                 page_rect = page.rect
@@ -412,7 +463,6 @@ class PrintALLApp:
                     fontsize=dynamic_fontsize,
                     color=(1, 0, 0),
                     fontname="china-font",
-                    # 直接使用 CHINESE_FONT_PATH
                     fontfile=CHINESE_FONT_PATH,
                     align=fitz.TEXT_ALIGN_CENTER,
                 )
@@ -434,6 +484,7 @@ class PrintALLApp:
                 os.remove(temp_output_path)
             return False
         finally:
+            # 确保任何情况下文档都会被关闭
             if doc:
                 doc.close()
     
