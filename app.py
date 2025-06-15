@@ -10,6 +10,7 @@ import subprocess
 import tkinter as tk
 from logging.handlers import RotatingFileHandler
 from tkinter import ttk, filedialog, messagebox, scrolledtext
+import webbrowser
 
 # --- 统一的依赖项导入 ---
 
@@ -324,8 +325,15 @@ class PrintALLApp:
             filename = os.path.basename(filepath)
             workbook = openpyxl.load_workbook(filepath)
             header_format_string = "打印对象：&F|&A 第&[Page]/&N页"
-            
+
             for ws in workbook.worksheets:
+                # 判断Sheet是否为空
+                is_sheet_none = (ws.max_row == 1 and ws.max_column == 1 and ws['A1'].value is None)
+                # 判断工作表标签是否未设置颜色
+                is_color_unset = (ws.sheet_properties.tabColor is None)
+
+                if not is_sheet_none and len(workbook.worksheets) > 1 and is_color_unset:
+                    ws.sheet_properties.tabColor = "d86100"
                 if not ws.oddHeader.center.text:
                     ws.oddHeader.center.text = header_format_string
                 ws.print_title_rows = '1:1'
@@ -651,9 +659,13 @@ class PrintALLApp:
             filter_frame, from_=0, to=9999, textvariable=self.print_max_pages, width=5
         ).pack(side=tk.LEFT)
 
-        ttk.Label(self.print_tab, text="LibreOffice 路径:").grid(
-            row=4, column=0, padx=5, pady=5, sticky="w"
-        )
+        def open_libreoffice_page(event):
+            webbrowser.open_new("https://zh-cn.libreoffice.org/download/download/")
+        # 创建标签并绑定事件
+        label = tk.Label(self.print_tab, text="LibreOffice 安装路径（点击下载）", fg="blue", cursor="hand2")
+        label.grid(row=4, column=0, padx=5, pady=5, sticky="w")
+        label.bind("<Button-1>", open_libreoffice_page)
+
         ttk.Entry(self.print_tab, textvariable=self.libreoffice_path_var, width=50).grid(
             row=4, column=1, padx=5, pady=5, sticky="ew"
         )
